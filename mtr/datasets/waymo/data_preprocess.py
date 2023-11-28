@@ -129,7 +129,8 @@ def decode_map_features_from_proto(map_features):
             cur_polyline = np.concatenate((cur_polyline[:, 0:3], cur_polyline_dir, cur_polyline[:, 3:]), axis=-1)
 
             map_infos['speed_bump'].append(cur_info)
-
+        elif cur_data.driveway.ByteSize() > 0:
+            continue
         else:
             print(cur_data)
             raise ValueError
