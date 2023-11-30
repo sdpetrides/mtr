@@ -9,6 +9,7 @@ import os
 import torch
 import tqdm
 from torch.nn.utils import clip_grad_norm_
+import wandb
 
 
 def train_one_epoch(model, optimizer, train_loader, accumulated_iter, optim_cfg,
@@ -65,6 +66,7 @@ def train_one_epoch(model, optimizer, train_loader, accumulated_iter, optim_cfg,
 
         # log to console and tensorboard
         if rank == 0:
+            wandb.log({"loss": loss.item(), "lr": cur_lr}, step=accumulated_iter)
             if accumulated_iter % logger_iter_interval == 0 or cur_it == start_it or cur_it + 1 == total_it_each_epoch:
                 trained_time_past_all = tbar.format_dict['elapsed']
                 second_each_iter = pbar.format_dict['elapsed'] / max(cur_it - start_it + 1, 1.0)
@@ -183,6 +185,7 @@ def train_model(model, optimizer, train_loader, optim_cfg,
                 if cfg.LOCAL_RANK == 0:
                     for key, val in tb_dict.items():
                         tb_log.add_scalar('eval/' + key, val, trained_epoch)
+                        wandb.log({f'eval/{key}': val}, step=accumulated_iter)
 
                     if 'mAP' in tb_dict:
                         best_record_file = eval_output_dir / ('best_eval_record.txt')

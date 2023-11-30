@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 import torch.optim.lr_scheduler as lr_sched
 from tensorboardX import SummaryWriter
+import wandb
 
 from mtr.datasets import build_dataloader
 from mtr.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_file
@@ -227,6 +228,18 @@ def main():
     # -----------------------start training---------------------------
     logger.info('**********************Start training %s/%s(%s)**********************'
                 % (cfg.EXP_GROUP_PATH, cfg.TAG, args.extra_tag))
+    if args.local_rank == 0:
+        wandb.init(
+            project="mtr-performer",
+            config={
+                "model": "MTR-default",
+                "epochs": args.epochs,
+                "batch_size": args.batch_size,
+                "tag": cfg.TAG,
+                "extra_tag": args.extra_tag,
+            }
+        )
+
     train_model(
         model,
         optimizer,
@@ -253,6 +266,10 @@ def main():
     logger.info('**********************End training %s/%s(%s)**********************\n\n\n'
                 % (cfg.EXP_GROUP_PATH, cfg.TAG, args.extra_tag))
 
+    if args.local_rank == 0:
+        wandb.finish()
+
+    return
 
     logger.info('**********************Start evaluation %s/%s(%s)**********************' %
                 (cfg.EXP_GROUP_PATH, cfg.TAG, args.extra_tag))
