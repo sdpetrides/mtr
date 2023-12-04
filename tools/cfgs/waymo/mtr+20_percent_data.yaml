@@ -15,7 +15,7 @@ DATA_CONFIG:
 
     SAMPLE_INTERVAL: {
         'train': 5, 
-        'test': 1
+        'test': 5
     }
 
     INFO_FILTER_DICT: 
@@ -24,9 +24,9 @@ DATA_CONFIG:
    # for map feature encoding
     POINT_SAMPLED_INTERVAL: 1
     NUM_POINTS_EACH_POLYLINE: 20
-    VECTOR_BREAK_DIST_THRESH: 1.0
+    VECTOR_BREAK_DIST_THRESH: 0.5
 
-    NUM_OF_SRC_POLYLINES: 768
+    NUM_OF_SRC_POLYLINES: 1024 # 768
     CENTER_OFFSET_OF_MAP: &center_offset [30.0, 0]
 
 
@@ -50,6 +50,7 @@ MODEL:
         DROPOUT_OF_ATTN: 0.1 
 
         USE_LOCAL_ATTN: True
+        USE_PERFORMER: True
 
     MOTION_DECODER:
         NAME: MTRDecoder
@@ -85,7 +86,7 @@ OPTIMIZATION:
     NUM_EPOCHS: 30
 
     OPTIMIZER: AdamW
-    LR: 0.0001
+    LR: 0.0003
     WEIGHT_DECAY: 0.01
 
     SCHEDULER: lambdaLR

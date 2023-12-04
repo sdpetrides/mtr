@@ -50,6 +50,9 @@ def train_one_epoch(model, optimizer, train_loader, accumulated_iter, optim_cfg,
         if optimizer_2 is not None:
             optimizer_2.zero_grad()
 
+        # logger.info(batch["input_dict"]["obj_trajs"].shape)
+        # logger.info(batch["input_dict"]["map_polylines"].shape)
+
         loss, tb_dict, disp_dict = model(batch)
 
         loss.backward()

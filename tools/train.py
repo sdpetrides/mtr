@@ -233,10 +233,15 @@ def main():
             project="mtr-performer",
             config={
                 "model": "MTR-default",
+                "dist": dist_train,
+                "workers": args.workers,
                 "epochs": args.epochs,
                 "batch_size": args.batch_size,
                 "tag": cfg.TAG,
                 "extra_tag": args.extra_tag,
+                "data_config": cfg.DATA_CONFIG,
+                "model_config": cfg.MODEL,
+                "opt_config": cfg.OPTIMIZATION,
             }
         )
 
