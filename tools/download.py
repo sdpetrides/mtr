@@ -13,10 +13,9 @@ def main():
     for i in tqdm(range(start, end)):
         fs.get(
             f"waymo_open_dataset_motion_v_1_2_0/uncompressed/scenario/training/training.tfrecord-{i:05d}-of-01000",
-            "/home/sp4076/MTR/data/waymo/scenario/training/training.tfrecord-{i:05d}-of-01000"
+            "/home/steve/mtr/data/waymo/scenario/training/training.tfrecord-{i:05d}-of-01000",
         )
 
 
 if __name__ == "__main__":
     main()
-
