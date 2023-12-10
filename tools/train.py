@@ -271,7 +271,7 @@ def main():
     logger.info('**********************End training %s/%s(%s)**********************\n\n\n'
                 % (cfg.EXP_GROUP_PATH, cfg.TAG, args.extra_tag))
 
-    if args.local_rank == 0:
+    if args.local_rank == None or args.local_rank == 0:
         wandb.finish()
 
     return
