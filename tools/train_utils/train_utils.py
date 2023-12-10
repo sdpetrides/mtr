@@ -8,8 +8,15 @@ import os
 
 import torch
 import tqdm
+from torch.profiler import profile, record_function, ProfilerActivity
 from torch.nn.utils import clip_grad_norm_
 import wandb
+
+
+def trace_handler(p):
+    output = p.key_averages().table(sort_by="self_cuda_time_total", row_limit=10)
+    print(output)
+    p.export_chrome_trace("/tmp/trace_" + str(p.step_num) + ".json")
 
 
 def train_one_epoch(model, optimizer, train_loader, accumulated_iter, optim_cfg,
@@ -26,84 +33,90 @@ def train_one_epoch(model, optimizer, train_loader, accumulated_iter, optim_cfg,
     ckpt_save_cnt = 1
     start_it = accumulated_iter % total_it_each_epoch
 
-    for cur_it in range(start_it, total_it_each_epoch):
-        try:
-            batch = next(dataloader_iter)
-        except StopIteration:
-            dataloader_iter = iter(train_loader)
-            batch = next(dataloader_iter)
-            print('new iters')
-
-        if scheduler is not None:
+    with profile(
+        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        schedule=torch.profiler.schedule(skip_first=2, wait=0, warmup=1, active=1, repeat=1),
+        on_trace_ready=trace_handler
+    ) as prof:
+        for cur_it in range(start_it, total_it_each_epoch):
             try:
-                scheduler.step(accumulated_iter)
+                batch = next(dataloader_iter)
+            except StopIteration:
+                dataloader_iter = iter(train_loader)
+                batch = next(dataloader_iter)
+                print('new iters')
+
+            if scheduler is not None:
+                try:
+                    scheduler.step(accumulated_iter)
+                except:
+                    scheduler.step()
+
+            try:
+                cur_lr = float(optimizer.lr)
             except:
-                scheduler.step()
+                cur_lr = optimizer.param_groups[0]['lr']
 
-        try:
-            cur_lr = float(optimizer.lr)
-        except:
-            cur_lr = optimizer.param_groups[0]['lr']
+            model.train()
+            optimizer.zero_grad()
+            if optimizer_2 is not None:
+                optimizer_2.zero_grad()
 
-        model.train()
-        optimizer.zero_grad()
-        if optimizer_2 is not None:
-            optimizer_2.zero_grad()
+            # logger.info(batch["input_dict"]["obj_trajs"].shape)
+            # logger.info(batch["input_dict"]["map_polylines"].shape)
 
-        # logger.info(batch["input_dict"]["obj_trajs"].shape)
-        # logger.info(batch["input_dict"]["map_polylines"].shape)
+            loss, tb_dict, disp_dict = model(batch)
+            prof.step()
 
-        loss, tb_dict, disp_dict = model(batch)
+            loss.backward()
 
-        loss.backward()
+            total_norm = clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
 
-        total_norm = clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
+            optimizer.step()
 
-        optimizer.step()
+            if optimizer_2 is not None:
+                optimizer_2.step()
 
-        if optimizer_2 is not None:
-            optimizer_2.step()
+            accumulated_iter += 1
+            disp_dict.update({'loss': loss.item(), 'lr': cur_lr})
 
-        accumulated_iter += 1
-        disp_dict.update({'loss': loss.item(), 'lr': cur_lr})
+            # log to console and tensorboard
+            if rank == 0:
+                wandb.log({"loss": loss.item(), "lr": cur_lr}, step=accumulated_iter)
+                if accumulated_iter % logger_iter_interval == 0 or cur_it == start_it or cur_it + 1 == total_it_each_epoch:
+                    trained_time_past_all = tbar.format_dict['elapsed']
+                    second_each_iter = pbar.format_dict['elapsed'] / max(cur_it - start_it + 1, 1.0)
 
-        # log to console and tensorboard
-        if rank == 0:
-            wandb.log({"loss": loss.item(), "lr": cur_lr}, step=accumulated_iter)
-            if accumulated_iter % logger_iter_interval == 0 or cur_it == start_it or cur_it + 1 == total_it_each_epoch:
-                trained_time_past_all = tbar.format_dict['elapsed']
-                second_each_iter = pbar.format_dict['elapsed'] / max(cur_it - start_it + 1, 1.0)
+                    trained_time_each_epoch = pbar.format_dict['elapsed']
+                    remaining_second_each_epoch = second_each_iter * (total_it_each_epoch - cur_it)
+                    remaining_second_all = second_each_iter * ((total_epochs - cur_epoch) * total_it_each_epoch - cur_it)
 
-                trained_time_each_epoch = pbar.format_dict['elapsed']
-                remaining_second_each_epoch = second_each_iter * (total_it_each_epoch - cur_it)
-                remaining_second_all = second_each_iter * ((total_epochs - cur_epoch) * total_it_each_epoch - cur_it)
+                    disp_str = ', '.join([f'{key}={val:.3f}' for key, val in disp_dict.items() if key != 'lr'])
+                    disp_str += f', lr={disp_dict["lr"]}'
+                    batch_size = batch.get('batch_size', None)
+                    logger.info(f'epoch: {cur_epoch}/{total_epochs}, acc_iter={accumulated_iter}, cur_iter={cur_it}/{total_it_each_epoch}, batch_size={batch_size}, iter_cost={second_each_iter:.2f}s, '
+                                f'time_cost(epoch): {tbar.format_interval(trained_time_each_epoch)}/{tbar.format_interval(remaining_second_each_epoch)}, '
+                                f'time_cost(all): {tbar.format_interval(trained_time_past_all)}/{tbar.format_interval(remaining_second_all)}, '
+                                f'{disp_str}')
 
-                disp_str = ', '.join([f'{key}={val:.3f}' for key, val in disp_dict.items() if key != 'lr'])
-                disp_str += f', lr={disp_dict["lr"]}'
-                batch_size = batch.get('batch_size', None)
-                logger.info(f'epoch: {cur_epoch}/{total_epochs}, acc_iter={accumulated_iter}, cur_iter={cur_it}/{total_it_each_epoch}, batch_size={batch_size}, iter_cost={second_each_iter:.2f}s, '
-                            f'time_cost(epoch): {tbar.format_interval(trained_time_each_epoch)}/{tbar.format_interval(remaining_second_each_epoch)}, '
-                            f'time_cost(all): {tbar.format_interval(trained_time_past_all)}/{tbar.format_interval(remaining_second_all)}, '
-                            f'{disp_str}')
+                if tb_log is not None:
+                    tb_log.add_scalar('meta_data/learning_rate', cur_lr, accumulated_iter)
+                    for key, val in tb_dict.items():
+                        tb_log.add_scalar('train/' + key, val, accumulated_iter)
+                    tb_log.add_scalar('train/total_norm', total_norm, accumulated_iter)
+                    if show_grad_curve:
+                        for key, val in model.named_parameters():
+                            key = key.replace('.', '/')
+                            tb_log.add_scalar('train_grad/' + key, val.grad.abs().max().item(), accumulated_iter)
 
-            if tb_log is not None:
-                tb_log.add_scalar('meta_data/learning_rate', cur_lr, accumulated_iter)
-                for key, val in tb_dict.items():
-                    tb_log.add_scalar('train/' + key, val, accumulated_iter)
-                tb_log.add_scalar('train/total_norm', total_norm, accumulated_iter)
-                if show_grad_curve:
-                    for key, val in model.named_parameters():
-                        key = key.replace('.', '/')
-                        tb_log.add_scalar('train_grad/' + key, val.grad.abs().max().item(), accumulated_iter)
-
-            time_past_this_epoch = pbar.format_dict['elapsed']
-            if time_past_this_epoch // ckpt_save_time_interval >= ckpt_save_cnt:
-                ckpt_name = ckpt_save_dir / 'latest_model'
-                save_checkpoint(
-                    checkpoint_state(model, optimizer, cur_epoch, accumulated_iter), filename=ckpt_name,
-                )
-                logger.info(f'Save latest model to {ckpt_name}')
-                ckpt_save_cnt += 1
+                time_past_this_epoch = pbar.format_dict['elapsed']
+                if time_past_this_epoch // ckpt_save_time_interval >= ckpt_save_cnt:
+                    ckpt_name = ckpt_save_dir / 'latest_model'
+                    save_checkpoint(
+                        checkpoint_state(model, optimizer, cur_epoch, accumulated_iter), filename=ckpt_name,
+                    )
+                    logger.info(f'Save latest model to {ckpt_name}')
+                    ckpt_save_cnt += 1
 
     if rank == 0:
         pbar.close()
@@ -122,6 +135,12 @@ def learning_rate_decay(i_epoch, optimizer, optim_cfg):
         if i_epoch > 0 and i_epoch % 5 == 0:
             for p in optimizer_2.param_groups:
                 p['lr'] *= 0.3
+
+
+def trace_handler(p):
+    output = p.key_averages().table(sort_by="self_cuda_time_total", row_limit=10)
+    print(output)
+    p.export_chrome_trace("trace_" + str(p.step_num) + ".json")
 
 
 def train_model(model, optimizer, train_loader, optim_cfg,
