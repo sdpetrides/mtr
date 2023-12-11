@@ -50,6 +50,8 @@ MODEL:
         DROPOUT_OF_ATTN: 0.1 
 
         USE_LOCAL_ATTN: True
+        USE_PERFORMER: False
+        USE_LIDAR: False
 
     MOTION_DECODER:
         NAME: MTRDecoder

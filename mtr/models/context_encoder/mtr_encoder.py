@@ -200,7 +200,10 @@ class MTREncoder(nn.Module):
             input_dict["map_polylines_mask"].cuda(),
         )
         if self.use_lidar:
-            lidar_points = input_dict["lidar_points"].cuda()
+            lidar_points = input_dict[
+                "lidar_points"
+            ].cuda()  # (center_objs, num_points, 4)
+            lidar_points_mask = input_dict["lidar_points_mask"].cuda()
 
         obj_trajs_last_pos = input_dict["obj_trajs_last_pos"].cuda()
         map_polylines_center = input_dict["map_polylines_center"].cuda()
@@ -210,6 +213,8 @@ class MTREncoder(nn.Module):
             obj_trajs_mask.dtype == torch.bool
             and map_polylines_mask.dtype == torch.bool
         )
+        if self.use_lidar:
+            assert lidar_points_mask.dtype == torch.bool
 
         num_center_objects, num_objects, _, _ = obj_trajs.shape
         num_polylines = map_polylines.shape[1]
@@ -224,6 +229,11 @@ class MTREncoder(nn.Module):
         map_polylines_feature = self.map_polyline_encoder(
             map_polylines, map_polylines_mask
         )  # (num_center_objects, num_polylines, C)
+        if self.use_lidar:
+            lidar_points = input_dict["lidar_points"].cuda()
+            lidar_points_feature = self.lidar_encoder(
+                lidar_points
+            )  # (num_center_objects, num_lidar_points, C)
 
         # apply self-attn
         obj_valid_mask = (
@@ -232,29 +242,38 @@ class MTREncoder(nn.Module):
         map_valid_mask = (
             map_polylines_mask.sum(dim=-1) > 0
         )  # (num_center_objects, num_polylines)
+        if self.use_lidar:
+            lidar_valid_mask = (
+                lidar_points_mask.sum(dim=-1) > 0
+            )  # (num_center_objects, num_lidar_points)
 
-        global_token_feature = torch.cat(
-            (obj_polylines_feature, map_polylines_feature),
-            dim=1,
-        )
-        global_token_mask = torch.cat((obj_valid_mask, map_valid_mask), dim=1)
-        global_token_pos = torch.cat((obj_trajs_last_pos, map_polylines_center), dim=1)
+        if self.use_lidar:
+            global_token_feature = torch.cat(
+                (
+                    obj_polylines_feature,
+                    map_polylines_feature,
+                    lidar_points_feature,
+                ),
+                dim=1,
+            )
+            global_token_mask = torch.cat(
+                (obj_valid_mask, map_valid_mask, lidar_valid_mask), dim=1
+            )
+            global_token_pos = torch.cat(
+                (obj_trajs_last_pos, map_polylines_center, lidar_points[..., :3]), dim=1
+            )
+        else:
+            global_token_feature = torch.cat(
+                (obj_polylines_feature, map_polylines_feature),
+                dim=1,
+            )
+            global_token_mask = torch.cat((obj_valid_mask, map_valid_mask), dim=1)
+            global_token_pos = torch.cat(
+                (obj_trajs_last_pos, map_polylines_center), dim=1
+            )
 
-        # print(global_token_feature.shape)
+        # print(global_token_feature.shape, global_token_mask.shape, global_token_pos.shape)
         if self.use_performer:
-            if self.use_lidar:
-                lidar_points = input_dict["lidar_points"].cuda()
-                lidar_points_feature = self.lidar_encoder(
-                    lidar_points
-                )  # (num_center_objects, num_lidar_points, C)
-                global_token_feature = torch.cat(
-                    (
-                        obj_polylines_feature,
-                        map_polylines_feature,
-                        lidar_points_feature,
-                    ),
-                    dim=1,
-                )
             for k in range(len(self.self_attn_layers)):
                 # Skip the apply_local_attn or apply_global_attn and keep batches
                 global_token_feature = self.self_attn_layers[k](
@@ -279,6 +298,10 @@ class MTREncoder(nn.Module):
         map_polylines_feature = global_token_feature[
             :, num_objects : (num_objects + num_polylines)
         ]
+        if self.use_lidar:
+            lidar_points_feature = global_token_feature[
+                :, (num_objects + num_polylines) :
+            ]
         assert map_polylines_feature.shape[1] == num_polylines
 
         # organize return features
@@ -293,5 +316,9 @@ class MTREncoder(nn.Module):
         batch_dict["map_mask"] = map_valid_mask
         batch_dict["obj_pos"] = obj_trajs_last_pos
         batch_dict["map_pos"] = map_polylines_center
+        if self.use_lidar:
+            batch_dict["lid_feature"] = lidar_points_feature
+            batch_dict["lid_mask"] = lidar_valid_mask
+            batch_dict["lid_pos"] = lidar_points[..., :3]
 
         return batch_dict

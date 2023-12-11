@@ -24,7 +24,7 @@ class WaymoDataset(DatasetTemplate):
         self.infos = self.get_all_infos(
             self.data_root / self.dataset_cfg.INFO_FILE[self.mode]
         )
-        self.use_lidar = cfg.get("USE_LIDAR", False)
+        self.use_lidar = self.dataset_cfg.get("USE_LIDAR", False)
         self.logger.info(f"Total scenes after filters: {len(self.infos)}")
 
     def get_all_infos(self, info_path):
@@ -200,7 +200,9 @@ class WaymoDataset(DatasetTemplate):
                 center_offset=self.dataset_cfg.get("CENTER_OFFSET_OF_MAP", (30.0, 0)),
             )
             ret_dict["lidar_points"] = lidar_data
+            ret_dict["lidar_points_mask"] = np.copy(lidar_data[..., -1:]).astype(np.bool)
 
+            # print(rext_dict["lidar_points"].shape, ret_dict["lidar_points_mask"].shape)
         return ret_dict
 
     def create_agent_data_for_center_objects(
