@@ -509,11 +509,9 @@ class MTRDecoder(nn.Module):
         input_dict = batch_dict['input_dict']
         obj_feature, obj_mask, obj_pos = batch_dict['obj_feature'], batch_dict['obj_mask'], batch_dict['obj_pos']
         map_feature, map_mask, map_pos = batch_dict['map_feature'], batch_dict['map_mask'], batch_dict['map_pos']
-        lid_feature, lid_mask, lid_pos = batch_dict['lid_feature'], batch_dict['lid_mask'], batch_dict['lid_pos']
         center_objects_feature = batch_dict['center_objects_feature']
         num_center_objects, num_objects, _ = obj_feature.shape
         num_polylines = map_feature.shape[1]
-        num_points = lid_feature.shape[1]
 
         # input projection
         center_objects_feature = self.in_proj_center_obj(center_objects_feature)
@@ -524,10 +522,6 @@ class MTRDecoder(nn.Module):
         map_feature_valid = self.in_proj_map(map_feature[map_mask])
         map_feature = map_feature.new_zeros(num_center_objects, num_polylines, map_feature_valid.shape[-1])
         map_feature[map_mask] = map_feature_valid
-
-        lid_feature_valid = self.in_proj_lid(lid_feature[lid_mask])
-        lid_feature = lid_feature.new_zeros(num_center_objects, num_points, lid_feature_valid.shape[-1])
-        lid_feature[lid_mask] = lid_feature_valid
 
         # dense future prediction
         obj_feature, pred_dense_future_trajs = self.apply_dense_future_prediction(
