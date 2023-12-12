@@ -192,21 +192,21 @@ class MTREncoder(nn.Module):
         obj_trajs, obj_trajs_mask = (
             input_dict[
                 "obj_trajs"
-            ].cuda(),  # (center_objs, num_agents, timesteps, nfeats)
-            input_dict["obj_trajs_mask"].cuda(),
+            ],  # (center_objs, num_agents, timesteps, nfeats)
+            input_dict["obj_trajs_mask"],
         )
         map_polylines, map_polylines_mask = (
-            input_dict["map_polylines"].cuda(),  # (center_objs, 768, 20, 9)
-            input_dict["map_polylines_mask"].cuda(),
+            input_dict["map_polylines"],  # (center_objs, 768, 20, 9)
+            input_dict["map_polylines_mask"],
         )
         if self.use_lidar:
             lidar_points = input_dict[
                 "lidar_points"
-            ].cuda()  # (center_objs, num_points, 4)
-            lidar_points_mask = input_dict["lidar_points_mask"].cuda()
+            ]  # (center_objs, num_points, 4)
+            lidar_points_mask = input_dict["lidar_points_mask"]
 
-        obj_trajs_last_pos = input_dict["obj_trajs_last_pos"].cuda()
-        map_polylines_center = input_dict["map_polylines_center"].cuda()
+        obj_trajs_last_pos = input_dict["obj_trajs_last_pos"]
+        map_polylines_center = input_dict["map_polylines_center"]
         track_index_to_predict = input_dict["track_index_to_predict"]
 
         assert (
@@ -230,7 +230,7 @@ class MTREncoder(nn.Module):
             map_polylines, map_polylines_mask
         )  # (num_center_objects, num_polylines, C)
         if self.use_lidar:
-            lidar_points = input_dict["lidar_points"].cuda()
+            lidar_points = input_dict["lidar_points"]
             lidar_points_feature = self.lidar_encoder(
                 lidar_points
             )  # (num_center_objects, num_lidar_points, C)

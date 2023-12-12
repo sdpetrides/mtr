@@ -37,11 +37,29 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
     if cfg.LOCAL_RANK == 0:
         progress_bar = tqdm.tqdm(total=len(dataloader), leave=True, desc='eval', dynamic_ncols=True)
     start_time = time.time()
+    context_encoder_time = 0
 
     pred_dicts = []
+    model.context_encoder = model.context_encoder.to("cpu")
+    model.motion_decoder = model.motion_decoder.to("cuda")
     for i, batch_dict in enumerate(dataloader):
         with torch.no_grad():
-            batch_pred_dicts = model(batch_dict)
+            # Context Encoder
+            batch_dict = {
+                k: v.to("cpu") if isinstance(v, torch.Tensor) else v
+                for k, v in batch_dict.items()
+            }
+            ce_start_time = time.time()
+            batch_dict = model.context_encoder(batch_dict)
+            context_encoder_time += (time.time() - ce_start_time)
+
+            # Motion Decoder
+            batch_dict = {
+                k: v.to("cuda") if isinstance(v, torch.Tensor) else v
+                for k, v in batch_dict.items()
+            }
+            batch_pred_dicts = model.motion_decoder(batch_dict)
+
             final_pred_dicts = dataset.generate_prediction_dicts(batch_pred_dicts, output_path=final_output_dir if save_to_file else None)
             pred_dicts += final_pred_dicts
 
@@ -68,7 +86,9 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
 
     logger.info('*************** Performance of EPOCH %s *****************' % epoch_id)
     sec_per_example = (time.time() - start_time) / len(dataloader.dataset)
+    sec_per_example_ec = context_encoder_time / len(dataloader.dataset)
     logger.info('Generate label finished(sec_per_example: %.4f second).' % sec_per_example)
+    logger.info('Context Encoder (sec_per_example: %.4f second).' % sec_per_example_ec)
 
     if cfg.LOCAL_RANK != 0:
         return {}
