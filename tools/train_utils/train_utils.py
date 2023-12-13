@@ -9,6 +9,7 @@ import os
 import torch
 import tqdm
 from torch.nn.utils import clip_grad_norm_
+import torch.nn.utils.prune as prune
 import wandb
 
 
@@ -25,6 +26,98 @@ def train_one_epoch(model, optimizer, train_loader, accumulated_iter, optim_cfg,
 
     ckpt_save_cnt = 1
     start_it = accumulated_iter % total_it_each_epoch
+
+    parameters_to_prune = (
+        # Agent Polyline Encoder
+        (model.context_encoder.agent_polyline_encoder.pre_mlps[0], 'weight'),
+        (model.context_encoder.agent_polyline_encoder.mlps[0], 'weight'),
+        (model.context_encoder.agent_polyline_encoder.mlps[3], 'weight'),
+        (model.context_encoder.agent_polyline_encoder.out_mlps[0], 'weight'),
+        (model.context_encoder.agent_polyline_encoder.out_mlps[2], 'weight'),
+        # Agent Map Polyline Encoder
+        (model.context_encoder.map_polyline_encoder.pre_mlps[0], 'weight'),
+        (model.context_encoder.map_polyline_encoder.pre_mlps[3], 'weight'),
+        (model.context_encoder.map_polyline_encoder.pre_mlps[6], 'weight'),
+        (model.context_encoder.map_polyline_encoder.mlps[0], 'weight'),
+        (model.context_encoder.map_polyline_encoder.mlps[3], 'weight'),
+        (model.context_encoder.map_polyline_encoder.out_mlps[0], 'weight'),
+        (model.context_encoder.map_polyline_encoder.out_mlps[2], 'weight'),
+        # Attention
+        *[
+            (model.context_encoder.self_attn_layers[i].linear1, 'weight')
+            for i in range(6)
+        ],
+        *[
+            (model.context_encoder.self_attn_layers[i].linear2, 'weight')
+            for i in range(6)
+        ],
+        # Decoder
+        (model.motion_decoder.in_proj_center_obj[0], 'weight'),
+        (model.motion_decoder.in_proj_center_obj[2], 'weight'),
+        (model.motion_decoder.in_proj_obj[0], 'weight'),
+        (model.motion_decoder.in_proj_obj[2], 'weight'),
+        (model.motion_decoder.in_proj_map[0], 'weight'),
+        (model.motion_decoder.in_proj_map[2], 'weight'),
+        *[
+            (model.motion_decoder.map_query_content_mlps[i], 'weight')
+            for i in range(6)
+        ],
+        (model.motion_decoder.map_query_embed_mlps, 'weight'),
+        (model.motion_decoder.obj_pos_encoding_layer[0], 'weight'),
+        (model.motion_decoder.obj_pos_encoding_layer[2], 'weight'),
+        (model.motion_decoder.obj_pos_encoding_layer[4], 'weight'),
+        (model.motion_decoder.dense_future_head[0], 'weight'),
+        (model.motion_decoder.dense_future_head[3], 'weight'),
+        (model.motion_decoder.dense_future_head[6], 'weight'),
+        (model.motion_decoder.future_traj_mlps[0], 'weight'),
+        (model.motion_decoder.future_traj_mlps[2], 'weight'),
+        (model.motion_decoder.future_traj_mlps[4], 'weight'),
+        (model.motion_decoder.intention_query_mlps[0], 'weight'),
+        (model.motion_decoder.intention_query_mlps[3], 'weight'),
+        *[
+            (model.motion_decoder.query_feature_fusion_layers[i][0], 'weight')
+            for i in range(6)
+        ],
+        *[
+            (model.motion_decoder.query_feature_fusion_layers[i][3], 'weight')
+            for i in range(6)
+        ],
+        *[
+            (model.motion_decoder.motion_reg_heads[i][0], 'weight')
+            for i in range(6)
+        ],
+        *[
+            (model.motion_decoder.motion_reg_heads[i][3], 'weight')
+            for i in range(6)
+        ],
+        *[
+            (model.motion_decoder.motion_reg_heads[i][6], 'weight')
+            for i in range(6)
+        ],
+        *[
+            (model.motion_decoder.motion_cls_heads[i][0], 'weight')
+            for i in range(6)
+        ],
+        *[
+            (model.motion_decoder.motion_cls_heads[i][3], 'weight')
+            for i in range(6)
+        ],
+        *[
+            (model.motion_decoder.motion_cls_heads[i][6], 'weight')
+            for i in range(6)
+        ],
+    )
+
+    print("Params that are zero: " + str(sum([torch.sum(param == 0).item() for param in model.parameters()])))
+
+
+    prune.global_unstructured(
+        parameters_to_prune,
+        pruning_method=prune.L1Unstructured,
+        amount=0.75,
+    )
+
+    print("Params that are zero: " + str(sum([torch.sum(param == 0).item() for param in model.parameters()])))
 
     for cur_it in range(start_it, total_it_each_epoch):
         try:
@@ -69,7 +162,15 @@ def train_one_epoch(model, optimizer, train_loader, accumulated_iter, optim_cfg,
 
         # log to console and tensorboard
         if rank == 0:
-            wandb.log({"loss": loss.item(), "lr": cur_lr}, step=accumulated_iter)
+            wandb.log(
+                {
+                    "loss": loss.item(),
+                    "lr": cur_lr,
+                    "weights": model.context_encoder.self_attn_layers[0].linear1.weight.detach().cpu().numpy(),
+                    "mask": model.context_encoder.self_attn_layers[0].linear1.weight_mask.detach().cpu().numpy(),
+                },
+                step=accumulated_iter
+            )
             if accumulated_iter % logger_iter_interval == 0 or cur_it == start_it or cur_it + 1 == total_it_each_epoch:
                 trained_time_past_all = tbar.format_dict['elapsed']
                 second_each_iter = pbar.format_dict['elapsed'] / max(cur_it - start_it + 1, 1.0)
@@ -104,6 +205,13 @@ def train_one_epoch(model, optimizer, train_loader, accumulated_iter, optim_cfg,
                 )
                 logger.info(f'Save latest model to {ckpt_name}')
                 ckpt_save_cnt += 1
+
+    for layer, _ in parameters_to_prune:
+        prune.remove(layer, 'weight')
+        print(
+            f"Sparsity: {(100. * float(torch.sum(layer.weight == 0)) / float(layer.weight.nelement())):.2f}%"
+        )
+    print("Params that are zero: " + str(sum([torch.sum(param == 0).item() for param in model.parameters()])))
 
     if rank == 0:
         pbar.close()
